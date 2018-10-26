@@ -1,7 +1,6 @@
 ////
 const AppSync = require('aws-sdk/clients/appsync');
-const { API, graphqlOperation } = require('aws-amplify');
-const util = require('util');
+const axios = require('axios');
 
 ////
 let apiKey = null;
@@ -25,16 +24,8 @@ const loadApiKey = async() => {
   };
   
   let result = await new AppSync().listApiKeys(params).promise();
-  if (result) {
+  if (result && result.apiKeys && result.apiKeys.length > 0) {
     apiKey = result.apiKeys[0].id;
-
-    const config = {
-      'aws_appsync_graphqlEndpoint': process.env.APPSYNC_ENDPOINT,
-      'aws_appsync_region': process.env.AWS_REGION,
-      'aws_appsync_authenticationType': 'API_KEY',
-      'aws_appsync_apiKey': apiKey,
-    };
-    API.configure(config);
   } else {
     console.error(`Could not load API Key for API (${process.env.APPSYNC_APIID})`);
     throw new Error('Could not load API Key');
@@ -45,16 +36,29 @@ const loadApiKey = async() => {
  * 
  */
 const executeMutation = async(id, body) => {
-  const message = {
-    id: id,
-    body: body,
+  const mutation = {
+    query: PublishMessageMutation,
+    operationName: 'PublishMessage',
+    variables: {
+      id: id,
+      body: body,
+    },
   };
 
   try {
-    let result = await API.graphql(graphqlOperation(PublishMessageMutation, message));
-    console.log("Mutation result: " + JSON.stringify(result));
+    let response = await axios({
+      method: 'POST',
+      url: process.env.APPSYNC_ENDPOINT,
+      data: JSON.stringify(mutation),
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+      }
+    });
+    console.log(response.data);
   } catch (error) {
-    console.error(JSON.stringify(error));
+    console.error(`[ERROR] ${error.response.status} - ${JSON.stringify(error.response.data)}`);
+    throw error;
   }
 };
 
