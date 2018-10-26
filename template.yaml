@@ -161,5 +161,9 @@ Resources:
 
 Outputs:
   ApiEndpoint:
-    Description: GraphQL Endpoint
+    Description: AppSync Endpoint
     Value: !GetAtt MessagesApi.GraphQLUrl
+  
+  ApiId:
+    Description: AppSync API ID
+    Value: !GetAtt MessagesApi.ApiId
