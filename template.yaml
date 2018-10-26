@@ -95,12 +95,13 @@ Resources:
       Timeout: 10
       Description: Trigger AppSync mutation on DynamoDB change
       Policies:
-        - Statement:
+        - Version: 2012-10-17
+          Statement:
           - Effect: Allow
             Action:
               - appsync:ListApiKeys
             Resource:
-              - !GetAtt MessagesApi.Arn
+              - !Sub arn:aws:appsync:${AWS::Region}:${AWS::AccountId}:/v1/apis/${MessagesApi.ApiId}/apikeys
       Environment:
         Variables:
           APPSYNC_ENDPOINT: !GetAtt MessagesApi.GraphQLUrl
