@@ -1,0 +1,164 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+
+Transform: 'AWS::Serverless-2016-10-31'
+
+Description: AWS AppSync External Mutation
+
+Resources:
+  ## AppSync ##
+  MessagesApi:
+    Type: AWS::AppSync::GraphQLApi
+    Properties:
+      AuthenticationType: API_KEY
+      Name: MesssagesApi
+
+  MessagesApiKey:
+    Type: AWS::AppSync::ApiKey
+    Properties:
+      ApiId: !GetAtt MessagesApi.ApiId
+      Description: API Key for Messages API
+
+  MessagesSchema:
+    Type: AWS::AppSync::GraphQLSchema
+    DependsOn: MessagesApi
+    Properties:
+      ApiId: !GetAtt MessagesApi.ApiId
+      DefinitionS3Location: schema.graphql
+
+  CreateMessageMutationResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MessagesSchema
+    Properties:
+      ApiId: !GetAtt MessagesApi.ApiId
+      TypeName: Mutation
+      FieldName: createMessage
+      DataSourceName: !GetAtt MessagesTableDataSource.Name
+      RequestMappingTemplate: |
+        {
+          "version": "2017-02-28",
+          "operation": "PutItem",
+          "key": {
+            "id": $util.dynamodb.toDynamoDBJson($util.autoId()),
+          },
+          "attributeValues": $util.dynamodb.toMapValuesJson($ctx.args.input)
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+
+  PublishMessageMutationResolver:
+    Type: AWS::AppSync::Resolver
+    DependsOn: MessagesSchema
+    Properties:
+      ApiId: !GetAtt MessagesApi.ApiId
+      TypeName: Mutation
+      FieldName: publishMessage
+      DataSourceName: !GetAtt NoneDataSource.Name
+      RequestMappingTemplate: |
+        {
+          "version": "2017-02-28",
+          "payload": {
+            "id": "${ctx.arguments.message.id}",
+            "body": "${ctx.arguments.message.body}"
+          }
+        }
+      ResponseMappingTemplate: |
+        $util.toJson($ctx.result)
+
+  MessagesTableDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      ApiId: !GetAtt MessagesApi.ApiId
+      Name: MessagesTableDataSource
+      Description: Messages data source
+      Type: AMAZON_DYNAMODB
+      ServiceRoleArn: !GetAtt AppSyncServiceRole.Arn
+      DynamoDBConfig:
+        TableName: !Ref MessagesTable
+        AwsRegion: !Sub ${AWS::Region}
+
+  NoneDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      ApiId: !GetAtt MessagesApi.ApiId
+      Name: PublishMessagesDataSource
+      Description: Local data source to publish external changes
+      Type: NONE
+
+  ## Lambda ##
+  StreamFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: stream/
+      Handler: index.handler
+      Runtime: nodejs8.10
+      Timeout: 10
+      Description: Trigger AppSync mutation on DynamoDB change
+      Policies:
+        - Statement:
+          - Effect: Allow
+            Action:
+              - appsync:ListApiKeys
+            Resource:
+              - !GetAtt MessagesApi.Arn
+      Environment:
+        Variables:
+          APPSYNC_ENDPOINT: !GetAtt MessagesApi.GraphQLUrl
+          APPSYNC_APIID: !GetAtt MessagesApi.ApiId
+      Events:
+        Stream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt MessagesTable.StreamArn
+            StartingPosition: LATEST
+            BatchSize: 10
+
+  ## DynamoDB ##
+  MessagesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: messages-table
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+
+  ## IAM ##
+  AppSyncServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /external-mutation/
+      RoleName: appsync-external-mutation-service-role
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSAppSyncPushToCloudWatchLogs
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - appsync.amazonaws.com
+      Policies:
+        - PolicyName: appsync-external-mutation-service-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                Resource:
+                  - !Join [ "", [ !GetAtt MessagesTable.Arn, "*" ] ]
+
+Outputs:
+  ApiEndpoint:
+    Description: GraphQL Endpoint
+    Value: !GetAtt MessagesApi.GraphQLUrl

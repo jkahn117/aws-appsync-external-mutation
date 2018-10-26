@@ -1,0 +1,32 @@
+type Message {
+  id: ID!
+  body: String!
+}
+
+input MessageInput {
+  id: ID!
+  body: String!
+}
+
+type Mutation {
+  # called by client to add message to table
+  createMessage(content: String!): Message
+
+  # called by Lambda to execute mutation when data source changes
+  publishMessage(message: MessageInput!): Message
+}
+
+type Query {
+  allMessages: [Message]
+}
+
+type Subscription {
+  onCreateMessage: Message
+    @aws_subscribe(mutations: [ "createMessage", "publishMessage" ])
+}
+
+schema {
+  query: Query
+  mutation: Mutation
+  subscription: Subscription
+}
